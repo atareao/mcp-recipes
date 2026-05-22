@@ -48,7 +48,7 @@ All config is via environment variables or `.env` file:
 | `EMBEDDING_DIM` | `1024` | Embedding dimension (must match model) |
 | `MCP_TRANSPORT` | `stdio` | `stdio` or `http` |
 | `MCP_HOST` | `127.0.0.1` | HTTP listen host |
-| `MCP_PORT` | `3003` | HTTP listen port |
+| `MCP_PORT` | `3011` | HTTP listen port |
 
 ## Usage
 
@@ -83,13 +83,13 @@ When using `MCP_TRANSPORT=http`, the server exposes a JSON-RPC endpoint at `POST
 
 ```sh
 # Initialize session
-curl -X POST http://localhost:3003/mcp \
+curl -X POST http://localhost:3011/mcp \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize"}'
 
 # Use returned Mcp-Session-Id in subsequent requests
-curl -X POST http://localhost:3003/mcp \
+curl -X POST http://localhost:3011/mcp \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -H "Mcp-Session-Id: <session-id>" \

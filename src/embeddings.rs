@@ -1,9 +1,7 @@
 use anyhow::Context;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use tokio::time;
+use std::time::Instant;
 use tracing::{debug, info, warn};
 
 use crate::config::{Config, EmbeddingMode};
@@ -80,21 +78,6 @@ impl Embedder {
                 Ok(())
             }
         }
-    }
-
-    pub fn start_keepalive(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
-        let this = Arc::clone(self);
-        let interval = Duration::from_secs(300);
-        tokio::spawn(async move {
-            let mut ticker = time::interval(interval);
-            loop {
-                ticker.tick().await;
-                match this.embed("keepalive").await {
-                    Ok(_) => debug!("Embedding keepalive successful"),
-                    Err(e) => warn!("Embedding keepalive failed: {}", e),
-                }
-            }
-        })
     }
 
     async fn warmup_ollama(&self) -> anyhow::Result<()> {

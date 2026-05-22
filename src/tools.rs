@@ -18,6 +18,7 @@ use tracing::{debug, info};
 use crate::config::EmbeddingMode;
 use crate::db::PgVectorDb;
 use crate::embeddings::Embedder;
+use crate::models::build_embed_text;
 
 #[derive(Debug, Error)]
 #[error("{0}")]
@@ -440,8 +441,8 @@ impl RecipesHandler {
                 Ok(CallToolResult::text_content(vec![output.into()]))
             }
             None => Err(tool_err(format!("Recipe not found: {}", id))),
-        }
     }
+}
 
     async fn search_by_ingredients(&self, args: serde_json::Value) -> Result<CallToolResult, CallToolError> {
         let ingredients = args
@@ -752,51 +753,72 @@ impl RecipesHandler {
     }
 }
 
-fn build_embed_text(recipe: &crate::models::Recipe) -> String {
-    let mut parts = Vec::new();
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    parts.push(format!("Title: {}", recipe.title));
+    mod input_schema_helpers {
+        use super::*;
 
-    if !recipe.description.is_empty() {
-        parts.push(format!("Description: {}", recipe.description));
+        #[test]
+        fn string_prop_has_correct_type() {
+            let prop = string_prop("test description");
+            assert_eq!(prop.get("type").and_then(|v| v.as_str()), Some("string"));
+            assert_eq!(prop.get("description").and_then(|v| v.as_str()), Some("test description"));
+        }
+
+        #[test]
+        fn integer_prop_has_correct_type() {
+            let prop = integer_prop("count");
+            assert_eq!(prop.get("type").and_then(|v| v.as_str()), Some("integer"));
+        }
+
+        #[test]
+        fn number_prop_has_correct_type() {
+            let prop = number_prop("score");
+            assert_eq!(prop.get("type").and_then(|v| v.as_str()), Some("number"));
+        }
+
+        #[test]
+        fn array_prop_has_items_schema() {
+            let prop = array_prop("items");
+            assert_eq!(prop.get("type").and_then(|v| v.as_str()), Some("array"));
+            let items = prop.get("items").and_then(|v| v.as_object());
+            assert!(items.is_some());
+            assert_eq!(
+                items.and_then(|m| m.get("type")).and_then(|v| v.as_str()),
+                Some("string")
+            );
+        }
     }
 
-    if !recipe.courses.is_empty() {
-        parts.push(format!("Courses: {}", recipe.courses.join(", ")));
+    mod input_schema_builder {
+        use super::*;
+
+        #[test]
+        fn make_input_schema_with_required() {
+            let mut props = BTreeMap::new();
+            props.insert("name".to_string(), string_prop("The name"));
+            let schema = make_input_schema(props, vec!["name".to_string()]);
+            let json: serde_json::Value = serde_json::to_value(&schema).unwrap();
+            assert!(json.get("required").is_some());
+        }
+
+        #[test]
+        fn empty_input_schema_has_no_required() {
+            let schema = empty_input_schema();
+            let required = schema.required;
+            assert_eq!(required.len(), 0);
+        }
     }
 
-    if !recipe.food_types.is_empty() {
-        parts.push(format!("Food types: {}", recipe.food_types.join(", ")));
-    }
+    mod tool_error {
+        use super::*;
 
-    if !recipe.chef.is_empty() {
-        parts.push(format!("Chef: {}", recipe.chef));
+        #[test]
+        fn creates_error_with_message() {
+            let err = tool_err("something went wrong");
+            assert_eq!(err.to_string(), "something went wrong");
+        }
     }
-
-    if !recipe.ingredients.is_empty() {
-        let ingredients_str = recipe
-            .ingredients
-            .iter()
-            .map(|ing| {
-                if ing.quantity.is_some() && !ing.unit.is_empty() {
-                    format!(
-                        "{} {} {}",
-                        ing.quantity.unwrap(),
-                        ing.unit,
-                        ing.name
-                    )
-                } else {
-                    ing.name.clone()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-        parts.push(format!("Ingredients: {}", ingredients_str));
-    }
-
-    if !recipe.steps.is_empty() {
-        parts.push(format!("Steps: {}", recipe.steps));
-    }
-
-    parts.join("\n")
 }

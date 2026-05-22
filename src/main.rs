@@ -21,6 +21,7 @@ use tracing_subscriber::EnvFilter;
 use config::{Config, EmbeddingMode, Transport};
 use db::PgVectorDb;
 use embeddings::Embedder;
+use models::build_embed_text;
 use tools::RecipesHandler;
 
 #[tokio::main]
@@ -252,40 +253,4 @@ async fn cmd_index(args: &[String]) -> anyhow::Result<()> {
     eprintln!("  DB total: {}, with embeddings: {}", final_total, final_with_embeddings);
 
     Ok(())
-}
-
-fn build_embed_text(recipe: &crate::models::Recipe) -> String {
-    let mut parts = Vec::new();
-    parts.push(format!("Title: {}", recipe.title));
-    if !recipe.description.is_empty() {
-        parts.push(format!("Description: {}", recipe.description));
-    }
-    if !recipe.courses.is_empty() {
-        parts.push(format!("Courses: {}", recipe.courses.join(", ")));
-    }
-    if !recipe.food_types.is_empty() {
-        parts.push(format!("Food types: {}", recipe.food_types.join(", ")));
-    }
-    if !recipe.chef.is_empty() {
-        parts.push(format!("Chef: {}", recipe.chef));
-    }
-    if !recipe.ingredients.is_empty() {
-        let ingredients_str = recipe
-            .ingredients
-            .iter()
-            .map(|ing| {
-                if ing.quantity.is_some() && !ing.unit.is_empty() {
-                    format!("{} {} {}", ing.quantity.unwrap(), ing.unit, ing.name)
-                } else {
-                    ing.name.clone()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-        parts.push(format!("Ingredients: {}", ingredients_str));
-    }
-    if !recipe.steps.is_empty() {
-        parts.push(format!("Steps: {}", recipe.steps));
-    }
-    parts.join("\n")
 }

@@ -16,7 +16,7 @@ pub struct Config {
     pub port: u16,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum Transport {
     Stdio,
     Http,
@@ -31,7 +31,7 @@ impl std::fmt::Display for Transport {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum EmbeddingMode {
     Bm25,
     Ollama,
@@ -151,5 +151,43 @@ impl Config {
             host,
             port,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod transport_display {
+        use super::*;
+
+        #[test]
+        fn stdio_displays_as_stdio() {
+            assert_eq!(Transport::Stdio.to_string(), "stdio");
+        }
+
+        #[test]
+        fn http_displays_as_http() {
+            assert_eq!(Transport::Http.to_string(), "http");
+        }
+    }
+
+    mod embedding_mode_display {
+        use super::*;
+
+        #[test]
+        fn bm25_displays_as_bm25() {
+            assert_eq!(EmbeddingMode::Bm25.to_string(), "bm25");
+        }
+
+        #[test]
+        fn ollama_displays_as_ollama() {
+            assert_eq!(EmbeddingMode::Ollama.to_string(), "ollama");
+        }
+
+        #[test]
+        fn openrouter_displays_as_openrouter() {
+            assert_eq!(EmbeddingMode::OpenRouter.to_string(), "openrouter");
+        }
     }
 }

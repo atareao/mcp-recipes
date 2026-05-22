@@ -1,0 +1,24 @@
+[Unit]
+Description=MCP Recipes Server
+After=network-online.target
+
+[Container]
+Image=localhost/atareao/mcp-recipes:latest
+ContainerName=mcp-recipes
+PublishPort=3011:3011
+
+Environment=RUST_LOG=mcp_recipes=info
+Environment=EMBEDDING_MODE=bm25
+Environment=PGHOST=192.168.1.21
+Environment=PGPORT=5432
+Environment=PGDATABASE=mcp
+Environment=PGUSER=rag_admin
+Environment=PGPASSWORD=rag_password
+Environment=PGSSLMODE=disable
+Environment=MCP_TRANSPORT=stdio
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target
