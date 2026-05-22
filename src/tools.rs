@@ -381,19 +381,23 @@ impl RecipesHandler {
         Ok(CallToolResult::text_content(vec![output.into()]))
     }
 
-    async fn get_recipe_by_id(&self, args: serde_json::Value) -> Result<CallToolResult, CallToolError> {
-        let id_str = args
-            .get("id")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| tool_err("Missing 'id' parameter"))?;
+async fn get_recipe_by_id(&self, args: serde_json::Value) -> Result<CallToolResult, CallToolError> {
+        let id_str = match args.get("id").and_then(|v| v.as_str()) {
+            Some(s) => s,
+            None => return Ok(CallToolResult::text_content(vec!["Missing 'id' parameter".into()])),
+        };
 
-        let id = uuid::Uuid::parse_str(id_str)
-            .map_err(|e| tool_err(format!("Invalid UUID '{}': {}", id_str, e)))?;
+        let id = match uuid::Uuid::parse_str(id_str) {
+            Ok(id) => id,
+            Err(e) => return Ok(CallToolResult::text_content(vec![
+                format!("Invalid UUID '{}': {}", id_str, e).into()
+            ])),
+        };
 
         debug!("get_recipe_by_id: id={}", id);
 
-        match self.db.get_recipe_by_id(&id).await.map_err(|e| tool_err(format!("Error reading recipe: {}", e)))? {
-            Some(recipe) => {
+        match self.db.get_recipe_by_id(&id).await {
+            Ok(Some(recipe)) => {
                 let total_time = match (recipe.prep_time_minutes, recipe.cook_time_minutes) {
                     (Some(p), Some(c)) => format!("{} min", p + c),
                     (Some(p), None) => format!("{} min (prep only)", p),
@@ -440,9 +444,14 @@ impl RecipesHandler {
 
                 Ok(CallToolResult::text_content(vec![output.into()]))
             }
-            None => Err(tool_err(format!("Recipe not found: {}", id))),
+            Ok(None) => Ok(CallToolResult::text_content(vec![
+                format!("Recipe not found: {}", id).into()
+            ])),
+            Err(e) => Ok(CallToolResult::text_content(vec![
+                format!("Error reading recipe: {}", e).into()
+            ])),
+        }
     }
-}
 
     async fn search_by_ingredients(&self, args: serde_json::Value) -> Result<CallToolResult, CallToolError> {
         let ingredients = args
