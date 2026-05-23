@@ -18,7 +18,7 @@ use tracing::{debug, info};
 use crate::config::EmbeddingMode;
 use crate::db::PgVectorDb;
 use crate::embeddings::Embedder;
-use crate::models::build_embed_text;
+use crate::models::{build_embed_text, Recipe, slugify};
 
 #[derive(Debug, Error)]
 #[error("{0}")]
@@ -203,6 +203,31 @@ impl ServerHandler for RecipesHandler {
                     output_schema: None,
                     title: None,
                 },
+                Tool {
+                    name: "create_recipe".into(),
+                    description: Some("Generate a new recipe using AI (OpenRouter/Ollama) and store it in the database. Provide at minimum a recipe name; the AI will fill in all other details. Returns the complete generated recipe.".into()),
+                    input_schema: make_input_schema(
+                        BTreeMap::from([
+                            ("name".into(), string_prop("Recipe name/title (required)")),
+                            ("description".into(), string_prop("Optional description or context for the recipe")),
+                            ("course".into(), string_prop("Course type constraint (e.g., 'Primeros', 'Segundos', 'Postres')")),
+                            ("food_type".into(), string_prop("Food type constraint (e.g., 'Carne y Aves', 'Fruta y Verdura')")),
+                            ("chef".into(), string_prop("Chef name")),
+                            ("difficulty".into(), integer_prop("Maximum difficulty level (1=easy, 5=hard)")),
+                            ("max_total_time".into(), integer_prop("Maximum total time in minutes")),
+                            ("servings".into(), integer_prop("Number of servings")),
+                            ("ingredients".into(), array_prop("Required ingredients (the AI will add more as needed)")),
+                            ("notes".into(), string_prop("Additional notes or constraints for the AI")),
+                        ]),
+                        vec!["name".into()],
+                    ),
+                    annotations: None,
+                    execution: None,
+                    icons: vec![],
+                    meta: None,
+                    output_schema: None,
+                    title: None,
+                },
             ],
             meta: None,
             next_cursor: None,
@@ -230,6 +255,7 @@ impl ServerHandler for RecipesHandler {
             "search_by_filters" => self.search_by_filters(args).await,
             "stats" => self.stats().await,
             "index_recipes" => self.index_recipes(args).await,
+            "create_recipe" => self.create_recipe(args).await,
             "clear_db" => self.clear_db().await,
             _ => Err(CallToolError::unknown_tool(tool_name.clone())),
         };
@@ -763,6 +789,230 @@ async fn get_recipe_by_id(&self, args: serde_json::Value) -> Result<CallToolResu
             )
             .into(),
         ]))
+    }
+
+    async fn create_recipe(&self, args: serde_json::Value) -> Result<CallToolResult, CallToolError> {
+        if matches!(self.embedder.embedding_mode(), EmbeddingMode::Bm25) {
+            return Err(tool_err("Recipe generation requires an LLM. Set EMBEDDING_MODE=ollama or EMBEDDING_MODE=openrouter"));
+        }
+
+        let name = args
+            .get("name")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| tool_err("Missing 'name' parameter"))?;
+
+        let description = args.get("description").and_then(|v| v.as_str());
+        let course = args.get("course").and_then(|v| v.as_str());
+        let food_type = args.get("food_type").and_then(|v| v.as_str());
+        let chef = args.get("chef").and_then(|v| v.as_str());
+        let difficulty = args.get("difficulty").and_then(|v| v.as_i64());
+        let max_total_time = args.get("max_total_time").and_then(|v| v.as_i64());
+        let servings = args.get("servings").and_then(|v| v.as_i64());
+        let ingredients = args.get("ingredients").and_then(|v| v.as_array());
+        let notes = args.get("notes").and_then(|v| v.as_str());
+
+        debug!("create_recipe: name='{}'", name);
+
+        let mut constraints = Vec::new();
+        if let Some(d) = description {
+            constraints.push(format!("Description/context: {}", d));
+        }
+        if let Some(c) = course {
+            constraints.push(format!("Course type: {}", c));
+        }
+        if let Some(ft) = food_type {
+            constraints.push(format!("Food type: {}", ft));
+        }
+        if let Some(ch) = chef {
+            constraints.push(format!("Chef: {}", ch));
+        }
+        if let Some(d) = difficulty {
+            constraints.push(format!("Maximum difficulty (1-5): {}", d));
+        }
+        if let Some(tt) = max_total_time {
+            constraints.push(format!("Maximum total time: {} minutes", tt));
+        }
+        if let Some(s) = servings {
+            constraints.push(format!("Servings: {}", s));
+        }
+        if let Some(ings) = ingredients {
+            let ing_list: Vec<String> = ings.iter().filter_map(|v| v.as_str().map(String::from)).collect();
+            if !ing_list.is_empty() {
+                constraints.push(format!("Must include ingredients: {}", ing_list.join(", ")));
+            }
+        }
+        if let Some(n) = notes {
+            constraints.push(format!("Additional notes: {}", n));
+        }
+
+        let constraints_str = if constraints.is_empty() {
+            "No additional constraints.".to_string()
+        } else {
+            constraints.join("\n")
+        };
+
+        let system_prompt = "Eres un chef profesional experto en cocina española. Genera una receta completa en formato JSON. \
+            El JSON debe tener exactamente esta estructura (sin campos adicionales):\n\n\
+            {\n  \"title\": \"Nombre de la receta\",\n  \"description\": \"Descripción breve y apetitosa\",\n  \
+            \"prep_time_minutes\": 15,\n  \"cook_time_minutes\": 30,\n  \"difficulty\": 2,\n  \
+            \"servings_count\": 4,\n  \"servings_unit\": \"raciones\",\n  \"courses\": [\"Primeros\"],\n  \
+            \"food_types\": [\"Carne y Aves\"],\n  \"chef\": \"\",\n  \"ingredients\": [\n    {\"name\": \"pollo\", \"quantity\": 500, \"unit\": \"g\"},\n    \
+            {\"name\": \"sal\", \"quantity\": null, \"unit\": \"\"}\n  ],\n  \"steps\": \"Paso 1: ...\\nPaso 2: ...\"\n}\n\n\
+            Reglas:\n\
+            - difficulty debe ser un número del 1 (fácil) al 5 (muy difícil)\n\
+            - servings_count debe ser un número entero\n\
+            - Si un ingrediente no tiene cantidad, pon quantity como null y unit como \"\"\n\
+            - steps debe ser texto plano con saltos de línea \\n entre pasos\n\
+            - courses puede ser uno o varios de: Aperitivos, Primeros, Segundos, Postres\n\
+            - food_types puede ser uno o varios de: Carne y Aves, Pescado y Marisco, Fruta y Verdura, Arroz Legumbres y Cereales, Huevos y Lácteos, Pastas, Ensaladas, Sopas y Cremas\n\
+            - Responde ÚNICAMENTE con el JSON, sin texto adicional".to_string();
+
+        let user_prompt = format!("Genera una receta española llamada \"{}\".\n\n{}", name, constraints_str);
+
+        let generate_start = Instant::now();
+        let response_text = self
+            .embedder
+            .generate(&system_prompt, &user_prompt)
+            .await
+            .map_err(|e| tool_err(format!("AI generation error: {}", e)))?;
+        debug!("create_recipe: AI responded in {:.2?} ({} chars)", generate_start.elapsed(), response_text.chars().count());
+
+        let ai_recipe: serde_json::Value = serde_json::from_str(&response_text)
+            .map_err(|e| tool_err(format!("Failed to parse AI response as JSON: {}. Raw response: {}", e, response_text)))?;
+
+        let title = ai_recipe
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or(name);
+
+        let description_parsed = ai_recipe
+            .get("description")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        let prep_time = ai_recipe.get("prep_time_minutes").and_then(|v| v.as_i64()).map(|v| v as i32);
+        let cook_time = ai_recipe.get("cook_time_minutes").and_then(|v| v.as_i64()).map(|v| v as i32);
+        let diff = ai_recipe.get("difficulty").and_then(|v| v.as_i64()).map(|v| v as i32);
+        let servings_count = ai_recipe.get("servings_count").and_then(|v| v.as_i64()).map(|v| v as i32);
+        let servings_unit = ai_recipe.get("servings_unit").and_then(|v| v.as_str()).unwrap_or("raciones");
+        let chef_name = ai_recipe.get("chef").and_then(|v| v.as_str()).unwrap_or("");
+        let steps = ai_recipe.get("steps").and_then(|v| v.as_str()).unwrap_or("");
+
+        let courses: Vec<String> = ai_recipe
+            .get("courses")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .unwrap_or_default();
+
+        let food_types: Vec<String> = ai_recipe
+            .get("food_types")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .unwrap_or_default();
+
+        let ingredients_parsed: Vec<crate::models::Ingredient> = ai_recipe
+            .get("ingredients")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|ing| {
+                        let name = ing.get("name").and_then(|v| v.as_str())?;
+                        Some(crate::models::Ingredient {
+                            name: name.to_string(),
+                            quantity: ing.get("quantity").and_then(|v| {
+                                if v.is_null() { None } else { v.as_f64() }
+                            }),
+                            unit: ing.get("unit").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let recipe = Recipe {
+            id: uuid::Uuid::new_v4(),
+            slug: slugify(title),
+            url: format!("https://mcp-recipes.local/{}", slugify(title)),
+            title: title.to_string(),
+            description: description_parsed.to_string(),
+            prep_time_minutes: prep_time,
+            cook_time_minutes: cook_time,
+            difficulty: diff,
+            servings_count,
+            servings_unit: servings_unit.to_string(),
+            courses,
+            food_types,
+            chef: chef_name.to_string(),
+            ingredients: ingredients_parsed,
+            steps: steps.to_string(),
+        };
+
+        debug!("create_recipe: generating embedding for '{}'", recipe.title);
+        let embed_start = Instant::now();
+        let embed_text = build_embed_text(&recipe);
+        let embedding = self
+            .embedder
+            .embed(&embed_text)
+            .await
+            .map_err(|e| tool_err(format!("Embedding error: {}", e)))?;
+        debug!("create_recipe: embedding generated in {:.2?}", embed_start.elapsed());
+
+        let embedding_vec = pgvector::Vector::from(embedding);
+
+        debug!("create_recipe: upserting '{}' into database", recipe.title);
+        let upsert_start = Instant::now();
+        self.db
+            .upsert_recipe(&recipe, &embedding_vec)
+            .await
+            .map_err(|e| tool_err(format!("Database error: {}", e)))?;
+        debug!("create_recipe: upserted in {:.2?}", upsert_start.elapsed());
+
+        let total_time = match (recipe.prep_time_minutes, recipe.cook_time_minutes) {
+            (Some(p), Some(c)) => format!("{} min", p + c),
+            (Some(p), None) => format!("{} min (prep only)", p),
+            (None, Some(c)) => format!("{} min (cook only)", c),
+            (None, None) => "N/A".to_string(),
+        };
+
+        let mut output = String::new();
+        output.push_str(&format!("# Recipe Created: {}\n\n", recipe.title));
+        output.push_str(&format!("**ID**: `{}`\n", recipe.id));
+        output.push_str(&format!("**Slug**: {}\n", recipe.slug));
+        output.push_str(&format!("**Description**: {}\n\n", recipe.description));
+
+        output.push_str("## Details\n\n");
+        output.push_str(&format!("- **Total time**: {}\n", total_time));
+        output.push_str(&format!("- **Prep time**: {} min\n", recipe.prep_time_minutes.map(|t| t.to_string()).unwrap_or_else(|| "N/A".to_string())));
+        output.push_str(&format!("- **Cook time**: {} min\n", recipe.cook_time_minutes.map(|t| t.to_string()).unwrap_or_else(|| "N/A".to_string())));
+        output.push_str(&format!("- **Difficulty**: {}/5\n", recipe.difficulty.map(|d| d.to_string()).unwrap_or_else(|| "N/A".to_string())));
+        output.push_str(&format!("- **Servings**: {} {}\n", recipe.servings_count.map(|s| s.to_string()).unwrap_or_else(|| "N/A".to_string()), recipe.servings_unit));
+
+        if !recipe.courses.is_empty() {
+            output.push_str(&format!("- **Courses**: {}\n", recipe.courses.join(", ")));
+        }
+        if !recipe.food_types.is_empty() {
+            output.push_str(&format!("- **Food types**: {}\n", recipe.food_types.join(", ")));
+        }
+        if !recipe.chef.is_empty() {
+            output.push_str(&format!("- **Chef**: {}\n", recipe.chef));
+        }
+
+        output.push_str(&format!("\n## Ingredients ({})\n\n", recipe.ingredients.len()));
+        for ing in &recipe.ingredients {
+            if let Some(q) = ing.quantity {
+                if !ing.unit.is_empty() {
+                    output.push_str(&format!("- {} {} {}\n", q, ing.unit, ing.name));
+                } else {
+                    output.push_str(&format!("- {}\n", ing.name));
+                }
+            } else {
+                output.push_str(&format!("- {}\n", ing.name));
+            }
+        }
+
+        output.push_str(&format!("\n## Steps\n\n{}\n", recipe.steps));
+
+        Ok(CallToolResult::text_content(vec![output.into()]))
     }
 }
 

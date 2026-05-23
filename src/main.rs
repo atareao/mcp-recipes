@@ -100,7 +100,7 @@ async fn main() -> anyhow::Result<()> {
         },
         protocol_version: ProtocolVersion::V2025_11_25.into(),
         instructions: Some(
-            "Use 'search_recipes' to find recipes with hybrid search. Use 'get_recipe_by_id' to read full recipe details. Use 'search_by_ingredients' to find recipes by ingredient. Use 'search_by_filters' for structured filtering by course, food type, chef, difficulty, or time. Use 'index_recipes' to load recipes from JSON into the database.".into(),
+            "Use 'search_recipes' to find recipes with hybrid search. Use 'get_recipe_by_id' to read full recipe details. Use 'search_by_ingredients' to find recipes by ingredient. Use 'search_by_filters' for structured filtering by course, food type, chef, difficulty, or time. Use 'create_recipe' to generate a new Spanish recipe using AI and store it. Use 'index_recipes' to load recipes from JSON into the database.".into(),
         ),
         meta: None,
     };

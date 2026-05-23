@@ -10,6 +10,8 @@ pub struct Config {
     pub ollama_model: String,
     pub openrouter_api_key: String,
     pub openrouter_model: String,
+    pub openrouter_chat_model: String,
+    pub ollama_chat_model: String,
     pub embedding_dim: usize,
     pub transport: Transport,
     pub host: String,
@@ -133,6 +135,14 @@ impl Config {
             .unwrap_or_else(|_| "nomic-ai/nomic-embed-text-v1.5".to_string());
         debug!("OPENROUTER_MODEL: {} (default: nomic-ai/nomic-embed-text-v1.5)", openrouter_model);
 
+        let openrouter_chat_model = env::var("OPENROUTER_CHAT_MODEL")
+            .unwrap_or_else(|_| "google/gemini-2.0-flash-exp".to_string());
+        debug!("OPENROUTER_CHAT_MODEL: {} (default: google/gemini-2.0-flash-exp)", openrouter_chat_model);
+
+        let ollama_chat_model = env::var("OLLAMA_CHAT_MODEL")
+            .unwrap_or_else(|_| "llama3.1".to_string());
+        debug!("OLLAMA_CHAT_MODEL: {} (default: llama3.1)", ollama_chat_model);
+
         let embedding_dim = env::var("EMBEDDING_DIM")
             .unwrap_or_else(|_| "1024".to_string())
             .parse()
@@ -146,6 +156,8 @@ impl Config {
             ollama_model,
             openrouter_api_key,
             openrouter_model,
+            openrouter_chat_model,
+            ollama_chat_model,
             embedding_dim,
             transport,
             host,

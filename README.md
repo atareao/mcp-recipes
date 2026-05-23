@@ -7,7 +7,7 @@ An MCP (Model Context Protocol) server for searching and retrieving cooking reci
 - **Hybrid search** — combines BM25 full-text search with vector similarity (70% vector, 30% text) for better relevance
 - **BM25-only mode** — works without any embedding service for zero-dependency deployments
 - **Flexible embedding backends** — supports Ollama (local) or OpenRouter (remote API)
-- **7 MCP tools** — search, filter, browse, and manage a recipe database
+- **8 MCP tools** — search, filter, create, browse, and manage a recipe database
 - **PostgreSQL + pgvector** — production-ready vector database with auto-migration
 - **Dual transport** — stdio (for MCP clients) or HTTP (for development/testing)
 
@@ -44,7 +44,9 @@ All config is via environment variables or `.env` file:
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server URL |
 | `OLLAMA_MODEL` | `bge-m3:latest` | Ollama embedding model |
 | `OPENROUTER_API_KEY` | — | Required for `openrouter` mode |
-| `OPENROUTER_MODEL` | `nomic-ai/nomic-embed-text-v1.5` | OpenRouter model ID |
+| `OPENROUTER_MODEL` | `nomic-ai/nomic-embed-text-v1.5` | OpenRouter embedding model ID |
+| `OPENROUTER_CHAT_MODEL` | `google/gemini-2.0-flash-exp` | OpenRouter chat model for recipe generation |
+| `OLLAMA_CHAT_MODEL` | `llama3.1` | Ollama chat model for recipe generation |
 | `EMBEDDING_DIM` | `1024` | Embedding dimension (must match model) |
 | `MCP_TRANSPORT` | `stdio` | `stdio` or `http` |
 | `MCP_HOST` | `127.0.0.1` | HTTP listen host |
@@ -74,6 +76,7 @@ cargo run -- --index --path=recipes.json
 | `search_by_ingredients` | `ingredients` (req, array), `limit` | OR-match on ingredient names |
 | `search_by_filters` | `course`, `food_type`, `chef`, `max_difficulty`, `max_total_time`, `limit` | AND filters on structured fields |
 | `stats` | — | Database statistics |
+| `create_recipe` | `name` (req), `description`, `course`, `food_type`, `chef`, `difficulty`, `max_total_time`, `servings`, `ingredients`, `notes` | Generate a new Spanish recipe via AI and index it |
 | `index_recipes` | `path` | Index recipes from JSON file |
 | `clear_db` | — | Delete all recipes |
 
@@ -128,7 +131,7 @@ src/
 ├── config.rs        # Env var parsing, EmbeddingMode/Transport enums
 ├── db.rs            # PostgreSQL pool, SQL queries, migrations
 ├── embeddings.rs    # Ollama & OpenRouter embedding providers
-├── tools.rs         # 7 MCP tool handlers
+├── tools.rs         # 8 MCP tool handlers
 └── models.rs        # Recipe/Ingredient structs
 ```
 

@@ -33,6 +33,49 @@ struct OpenRouterEmbedResponse {
     data: Vec<OpenRouterEmbeddingData>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct ChatMessage {
+    role: String,
+    content: String,
+}
+
+#[derive(Debug, Serialize)]
+struct OpenRouterChatRequest {
+    model: String,
+    messages: Vec<ChatMessage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_format: Option<ResponseFormat>,
+}
+
+#[derive(Debug, Serialize)]
+struct ResponseFormat {
+    #[serde(rename = "type")]
+    type_: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenRouterChatChoice {
+    message: ChatMessage,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenRouterChatResponse {
+    choices: Vec<OpenRouterChatChoice>,
+}
+
+#[derive(Debug, Serialize)]
+struct OllamaChatRequest {
+    model: String,
+    messages: Vec<ChatMessage>,
+    stream: bool,
+    format: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct OllamaChatResponse {
+    message: ChatMessage,
+}
+
 pub struct Embedder {
     client: Client,
     config: Config,
@@ -63,6 +106,16 @@ impl Embedder {
             }
             EmbeddingMode::Ollama => self.embed_ollama(text).await,
             EmbeddingMode::OpenRouter => self.embed_openrouter(text).await,
+        }
+    }
+
+    pub async fn generate(&self, system_prompt: &str, user_prompt: &str) -> anyhow::Result<String> {
+        match &self.config.embedding_mode {
+            EmbeddingMode::Bm25 => {
+                anyhow::bail!("Recipe generation requires an LLM. Set EMBEDDING_MODE=ollama or EMBEDDING_MODE=openrouter")
+            }
+            EmbeddingMode::Ollama => self.generate_ollama(system_prompt, user_prompt).await,
+            EmbeddingMode::OpenRouter => self.generate_openrouter(system_prompt, user_prompt).await,
         }
     }
 
@@ -221,5 +274,92 @@ impl Embedder {
         debug!("OpenRouter response: dim={}, time={:.2?}", dim, elapsed);
 
         Ok(embedding)
+    }
+
+    async fn generate_openrouter(&self, system_prompt: &str, user_prompt: &str) -> anyhow::Result<String> {
+        let url = "https://openrouter.ai/api/v1/chat/completions";
+        debug!("Generate request (OpenRouter): model={}", self.config.openrouter_chat_model);
+
+        let request = OpenRouterChatRequest {
+            model: self.config.openrouter_chat_model.clone(),
+            messages: vec![
+                ChatMessage { role: "system".into(), content: system_prompt.to_string() },
+                ChatMessage { role: "user".into(), content: user_prompt.to_string() },
+            ],
+            response_format: Some(ResponseFormat { type_: "json_object".into() }),
+        };
+
+        let req_start = Instant::now();
+        let response = self
+            .client
+            .post(url)
+            .header("Authorization", format!("Bearer {}", self.config.openrouter_api_key))
+            .header("Content-Type", "application/json")
+            .json(&request)
+            .send()
+            .await
+            .context("Failed to send generate request to OpenRouter")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("OpenRouter generate error ({}): {}", status, body);
+        }
+
+        let chat_response: OpenRouterChatResponse = response
+            .json()
+            .await
+            .context("Failed to parse OpenRouter chat response")?;
+
+        let elapsed = req_start.elapsed();
+        let content = chat_response
+            .choices
+            .first()
+            .map(|c| c.message.content.clone())
+            .unwrap_or_default();
+        debug!("OpenRouter generate response in {:.2?} ({} chars)", elapsed, content.chars().count());
+
+        Ok(content)
+    }
+
+    async fn generate_ollama(&self, system_prompt: &str, user_prompt: &str) -> anyhow::Result<String> {
+        let url = format!("{}/api/chat", self.config.ollama_base_url);
+        debug!("Generate request (Ollama): model={}", self.config.ollama_chat_model);
+
+        let request = OllamaChatRequest {
+            model: self.config.ollama_chat_model.clone(),
+            messages: vec![
+                ChatMessage { role: "system".into(), content: system_prompt.to_string() },
+                ChatMessage { role: "user".into(), content: user_prompt.to_string() },
+            ],
+            stream: false,
+            format: "json".into(),
+        };
+
+        let req_start = Instant::now();
+        let response = self
+            .client
+            .post(&url)
+            .json(&request)
+            .send()
+            .await
+            .context("Failed to send generate request to Ollama")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("Ollama generate error ({}): {}", status, body);
+        }
+
+        let chat_response: OllamaChatResponse = response
+            .json()
+            .await
+            .context("Failed to parse Ollama chat response")?;
+
+        let elapsed = req_start.elapsed();
+        let content = chat_response.message.content;
+        debug!("Ollama generate response in {:.2?} ({} chars)", elapsed, content.chars().count());
+
+        Ok(content)
     }
 }
