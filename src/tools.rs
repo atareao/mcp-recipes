@@ -350,10 +350,11 @@ impl RecipesHandler {
             };
 
             output.push_str(&format!(
-                "## {} - Score: {:.3}\n\n**Title**: {}\n**URL**: {}\n**Time**: {}{}{}{}\n**Difficulty**: {} | **Servings**: {} {}\n**Ingredients**: {}\n**Description**: {}\n\n---\n\n",
+                "## {} - Score: {:.3}\n\n**Title**: {}\n**ID**: `{}`\n**URL**: {}\n**Time**: {}{}{}{}\n**Difficulty**: {} | **Servings**: {} {}\n**Ingredients**: {}\n**Description**: {}\n\n---\n\n",
                 i + 1,
                 r.combined_score,
                 r.title,
+                r.id,
                 r.url,
                 total_time,
                 courses,
@@ -411,6 +412,7 @@ async fn get_recipe_by_id(&self, args: serde_json::Value) -> Result<CallToolResu
                 output.push_str(&format!("**Description**: {}\n\n", recipe.description));
 
                 output.push_str("## Details\n\n");
+                output.push_str(&format!("- **ID**: `{}`\n", recipe.id));
                 output.push_str(&format!("- **Prep time**: {} min\n", recipe.prep_time_minutes.map(|t| t.to_string()).unwrap_or_else(|| "N/A".to_string())));
                 output.push_str(&format!("- **Cook time**: {} min\n", recipe.cook_time_minutes.map(|t| t.to_string()).unwrap_or_else(|| "N/A".to_string())));
                 output.push_str(&format!("- **Total time**: {}\n", total_time));
@@ -508,8 +510,9 @@ async fn get_recipe_by_id(&self, args: serde_json::Value) -> Result<CallToolResu
                 .collect();
 
             output.push_str(&format!(
-                "## {}\n\n**URL**: {}\n**Matched**: {}\n**Description**: {}\n\n---\n\n",
+                "## {}\n\n**ID**: `{}`\n**URL**: {}\n**Matched**: {}\n**Description**: {}\n\n---\n\n",
                 r.title,
+                r.id,
                 r.url,
                 matched_ingredients.join(", "),
                 r.description,
@@ -600,8 +603,9 @@ async fn get_recipe_by_id(&self, args: serde_json::Value) -> Result<CallToolResu
             };
 
             output.push_str(&format!(
-                "## {}\n\n**URL**: {} | **Time**: {} | **Difficulty**: {}{}\n**Description**: {}\n\n---\n\n",
+                "## {}\n\n**ID**: `{}`\n**URL**: {} | **Time**: {} | **Difficulty**: {}{}\n**Description**: {}\n\n---\n\n",
                 r.title,
+                r.id,
                 r.url,
                 total_time,
                 r.difficulty.map(|d| d.to_string()).unwrap_or_else(|| "N/A".to_string()),
